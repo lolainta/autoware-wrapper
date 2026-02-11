@@ -4,14 +4,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 RUN <<EOF
     apt update
-    apt install -y \
-        git \
-        ca-certificates \
-        xserver-xorg \
-        libvulkan1 \
-        libsdl2-2.0-0 \
-        libomp5 \
-        xdg-user-dirs
+    apt install -y git
     rm -rf /var/lib/apt/lists/*
 EOF
 
@@ -27,7 +20,6 @@ ENV PYTHONPATH=/opt/carla/PythonAPI/carla/
 COPY . .
 
 ENV PORT=50051
-ENV CARLA_PORT=2000
 
 ENTRYPOINT [ "/bin/bash" ]
 CMD [ "/app/entrypoint.sh" ]
