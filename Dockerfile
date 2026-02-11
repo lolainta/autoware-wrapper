@@ -1,4 +1,4 @@
-FROM ghcr.io/autowarefoundation/autoware:universe-sensing-perception-devel-cuda-20260209
+FROM ghcr.io/autowarefoundation/autoware:universe-devel-cuda-20260209
 
 ENV DEBIAN_FRONTEND=noninteractive
 
