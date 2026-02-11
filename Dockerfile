@@ -9,14 +9,11 @@ RUN <<EOF
 EOF
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
-COPY --from=docker.io/tonychi/carla:0.9.16 /opt/carla/ /opt/carla
 
 WORKDIR /app
 COPY --chown=carla:carla ./pyproject.toml .
 COPY --chown=carla:carla ./uv.lock .
 RUN uv sync --locked
-RUN uv add /opt/carla/PythonAPI/carla/dist/carla-0.9.16-cp310-cp310-manylinux_2_31_x86_64.whl
-ENV PYTHONPATH=/opt/carla/PythonAPI/carla/
 COPY . .
 
 ENV PORT=50051

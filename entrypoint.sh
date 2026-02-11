@@ -1,3 +1,5 @@
+#!/bin/bash
 pushd /app
-\uv run autoware_wrapper/server.py
+source /opt/autoware/setup.bash
+uv run autoware_wrapper/server.py
 popd

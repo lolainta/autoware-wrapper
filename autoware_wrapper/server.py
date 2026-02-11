@@ -1,8 +1,10 @@
 import os
 from concurrent import futures
 import grpc
-from sbsvf_api import av_server_pb2, av_server_pb2_grpc
+from sbsvf_api import av_server_pb2_grpc
 from sbsvf_api.pong_pb2 import Pong
+
+import rclpy
 
 
 class AVServer(av_server_pb2_grpc.AvServerServicer):
