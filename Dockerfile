@@ -14,7 +14,12 @@ WORKDIR /app
 COPY --chown=carla:carla ./pyproject.toml .
 COPY --chown=carla:carla ./uv.lock .
 RUN uv sync --locked
+COPY misc/sbsvf.launch.xml /opt/autoware/share/autoware_launch/launch/
 COPY . .
+
+RUN pip install pyyaml
+COPY misc/config.py /tmp/config.py
+RUN python3 /tmp/config.py --apply
 
 ENV PORT=50051
 

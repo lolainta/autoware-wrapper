@@ -1,19 +1,68 @@
 import os
 from concurrent import futures
 import grpc
-from sbsvf_api import av_server_pb2_grpc
-from sbsvf_api.pong_pb2 import Pong
+from google.protobuf.json_format import MessageToDict
+from pprint import pprint
 
-import rclpy
+from sbsvf_api import av_server_pb2, av_server_pb2_grpc
+from sbsvf_api.pong_pb2 import Pong
+from sbsvf_api.empty_pb2 import Empty
+
+from autoware import AutowarePureAV
+
+import logging
+
+logger = logging.getLogger(__name__)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    handlers=[logging.StreamHandler()],
+)
 
 
 class AVServer(av_server_pb2_grpc.AvServerServicer):
     def __init__(self):
         super().__init__()
+        self._av = None
 
     def Ping(self, request, context):
-        print("Received Ping request")
-        return Pong()
+        logger.info(f"Received ping from client: {context.peer()}")
+        return Pong(msg="pong")
+
+    def Init(self, request, context):
+        output_dir = request.output_dir.path
+        config = MessageToDict(request.config.config)
+        scenario_pack = request.scenario_pack
+        pprint(config)
+        pprint(scenario_pack)
+
+        self._av = AutowarePureAV(output_dir, config)
+        self._av.init(scenario_pack)
+
+        return av_server_pb2.AvServerMessages.InitResponse(success=True)
+
+    def Reset(self, request, context):
+        output_dir = request.output_dir.path
+        scenario_pack = request.scenario_pack
+        initial_observation = request.initial_observation
+        return self._av.reset(output_dir, scenario_pack, initial_observation)
+
+    def Step(self, request, context):
+        observation = request.observation
+        timestamp_ns = request.timestamp_ns
+        ret = self._av.step(observation, timestamp_ns)
+        print(f"Step result: {ret}")
+        return ret
+
+    def Stop(self, request, context):
+        self._av.stop()
+        return Empty()
+
+    def ShouldQuit(self, request, context):
+        should_quit = self._av.should_quit()
+        return av_server_pb2.AvServerMessages.ShouldQuitResponse(
+            should_quit=should_quit
+        )
 
 
 def serve():
