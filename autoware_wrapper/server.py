@@ -34,25 +34,29 @@ class AVServer(av_server_pb2_grpc.AvServerServicer):
         config = MessageToDict(request.config.config)
         scenario_pack = request.scenario_pack
         pprint(config)
-        pprint(scenario_pack)
+        # pprint(scenario_pack)
 
         self._av = AutowarePureAV(output_dir, config)
         self._av.init(scenario_pack)
 
-        return av_server_pb2.AvServerMessages.InitResponse(success=True)
+        return av_server_pb2.AvServerMessages.InitResponse(
+            success=True, msg="Initialization successful"
+        )
 
     def Reset(self, request, context):
         output_dir = request.output_dir.path
         scenario_pack = request.scenario_pack
         initial_observation = request.initial_observation
-        return self._av.reset(output_dir, scenario_pack, initial_observation)
+        return av_server_pb2.AvServerMessages.ResetResponse(
+            ctrl_cmd=self._av.reset(output_dir, scenario_pack, initial_observation)
+        )
 
     def Step(self, request, context):
         observation = request.observation
         timestamp_ns = request.timestamp_ns
-        ret = self._av.step(observation, timestamp_ns)
-        print(f"Step result: {ret}")
-        return ret
+        return av_server_pb2.AvServerMessages.StepResponse(
+            ctrl_cmd=self._av.step(observation, timestamp_ns)
+        )
 
     def Stop(self, request, context):
         self._av.stop()

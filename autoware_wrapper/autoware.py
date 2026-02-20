@@ -617,7 +617,7 @@ class AutowarePureAV:
         self._publish_manager.add(
             TopicPublisher(
                 name="tf",
-                rate_hz=120.0,
+                rate_hz=40.0,
                 mode=PublishMode.FIXED_RATE,
                 enabled=True,
                 publish_fn=lambda t: self._publish_tf(t),
