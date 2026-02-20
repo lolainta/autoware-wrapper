@@ -1232,7 +1232,7 @@ class AutowarePureAV:
         self._sps = sps
 
         # Map path
-        map_full_path = Path(sps.maps.get("osm_path").path).resolve()
+        map_full_path = Path(f"/mnt/map/osm/{sps.map_name}.osm").resolve()
         if not map_full_path.exists():
             raise FileNotFoundError(f"Autoware map file not found: {map_full_path}")
 

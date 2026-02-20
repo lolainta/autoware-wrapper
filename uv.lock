@@ -77,8 +77,8 @@ wheels = [
 
 [[package]]
 name = "sbsvf-api"
-version = "0.1.10"
-source = { git = "https://github.com/lolainta/sbsvf-api.git#76c25b8ef064afa12cc9bed3e5616efe92178e6b" }
+version = "0.1.11"
+source = { git = "https://github.com/lolainta/sbsvf-api.git#1deb7300fcf3bd608c9a36b74de476e0e0b0fdc1" }
 dependencies = [
     { name = "grpcio" },
     { name = "protobuf" },
