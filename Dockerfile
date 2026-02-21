@@ -22,6 +22,7 @@ COPY misc/config.py /tmp/config.py
 RUN python3 /tmp/config.py --apply
 
 ENV PORT=50051
+ENV RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
 
 ENTRYPOINT [ "/bin/bash" ]
 CMD [ "/app/entrypoint.sh" ]
