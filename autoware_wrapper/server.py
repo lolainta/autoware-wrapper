@@ -27,7 +27,7 @@ class AVServer(av_server_pb2_grpc.AvServerServicer):
 
     def Ping(self, request, context):
         logger.info(f"Received ping from client: {context.peer()}")
-        return Pong(msg="pong")
+        return Pong(msg="Autoware pong")
 
     def Init(self, request, context):
         output_dir = request.output_dir.path
