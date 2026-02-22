@@ -157,8 +157,6 @@ class AutowarePureAV:
         """
 
         self._setup_sps(sps)
-
-        rclpy.init()
         self._ensure_ros_node()
 
         self._launch_autoware()
@@ -279,11 +277,15 @@ class AutowarePureAV:
             self._last_error = str(e)
             raise RuntimeError("Failed to set Autoware route points.") from e
 
+        # When autoware reset (after second round), ego state may be still in WAITING_FOR_ENGAGE for a while, so wait here to ensure re-planning
+        time.sleep(2.0)
+
         start = time.time()
         while (
-            self._vehicle_state == autoware_system_msgs.AutowareState.WAITING_FOR_ROUTE
-            or self._vehicle_state
-            > autoware_system_msgs.AutowareState.PLANNING  # When autoware reset (after second round), ego state may be still in WAITING_FOR_ENGAGE for a while, so wait here to ensure re-planning
+            self._vehicle_state
+            == autoware_system_msgs.AutowareState.WAITING_FOR_ROUTE
+            # or self._vehicle_state
+            # > autoware_system_msgs.AutowareState.PLANNING
         ) and time.time() - start < self._timeout_sec:
             logger.info(f"Waiting for autoware to set route... ")
             time.sleep(0.1)
@@ -337,7 +339,6 @@ class AutowarePureAV:
         if self._vehicle_state == autoware_system_msgs.AutowareState.WAITING_FOR_ENGAGE:
             logger.info("Changing Autoware to autonomous mode...")
             try:
-                # input("Press Enter to change Autoware to autonomous mode...")
                 self._control_mode = autoware_vehicle_msgs.ControlModeReport.AUTONOMOUS
                 self._call_change_to_autonomous()
             except RuntimeError as e:
@@ -441,6 +442,9 @@ class AutowarePureAV:
     # ROS node / spin / process
     # ------------------------------------------------------------------
     def _ensure_ros_node(self) -> None:
+        # check if rclpy is inited
+        if not rclpy.ok():
+            rclpy.init()
 
         if self._node is not None:
             return
