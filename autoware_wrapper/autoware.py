@@ -66,6 +66,7 @@ class AutowarePureAV:
     def __init__(self, output_base: str, cfg: dict):
         self._output_base = Path(output_base)
         self._output_dir = self._output_base / "concrete"
+        os.makedirs(self._output_dir, exist_ok=True)
 
         self.config = cfg
         self._autoware_cfg = cfg.get("autoware", {})
@@ -81,7 +82,7 @@ class AutowarePureAV:
         self._launch_file = launch_cfg.get("file", "sbsvf.launch.xml")
         self._headless = bool(launch_cfg.get("headless", True))
         self._extra_launch_args: List[str] = list(launch_cfg.get("extra_args", []))
-        self._autoware_log_path = self._output_dir / launch_cfg.get(
+        self._autoware_log_path = self._output_base / launch_cfg.get(
             "log_path", "autoware_launch.log"
         )
 
