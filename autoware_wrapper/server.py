@@ -27,20 +27,19 @@ class AVServer(av_server_pb2_grpc.AvServerServicer):
 
     def Ping(self, request, context):
         logger.info(f"Received ping from client: {context.peer()}")
-        return Pong(msg="Autoware pong")
+        return Pong(msg="Autoware alive")
 
     def Init(self, request, context):
         output_dir = request.output_dir.path
         config = MessageToDict(request.config.config)
         scenario_pack = request.scenario_pack
         pprint(config)
-        # pprint(scenario_pack)
 
         self._av = AutowarePureAV(output_dir, config)
         self._av.init(scenario_pack)
 
         return av_server_pb2.AvServerMessages.InitResponse(
-            success=True, msg="Initialization successful"
+            success=True, msg="Autoware initialized"
         )
 
     def Reset(self, request, context):

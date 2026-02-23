@@ -63,9 +63,10 @@ class AutowarePureAV:
     - should_quit(): Decide whether to quit based on motion state / error / process status
     """
 
-    def __init__(self, output_dir: str, cfg: dict):
-        os.makedirs(output_dir, exist_ok=True)
-        self._output_dir = Path(output_dir)
+    def __init__(self, output_base: str, cfg: dict):
+        self._output_base = Path(output_base)
+        self._output_dir = self._output_base / "concrete"
+
         self.config = cfg
         self._autoware_cfg = cfg.get("autoware", {})
 
@@ -179,7 +180,7 @@ class AutowarePureAV:
 
     def reset(
         self,
-        output_dir: Path,
+        output_related: str,
         sps: ScenarioPack,
         init_obs: Optional[list[ObjectState]] = None,
     ) -> CtrlCmd:
@@ -191,8 +192,8 @@ class AutowarePureAV:
         2. 用 AD API 設 initial pose / route
         """
 
-        self._output_dir = output_dir
-        os.makedirs(self._output_dir, exist_ok=True)
+        self._output_dir = self._output_base / output_related
+
         self._ensure_ros_node()
 
         # If the map has changed, restart Autoware process
