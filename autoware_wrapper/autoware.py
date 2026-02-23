@@ -11,6 +11,7 @@ from typing import Optional, List
 
 import logging
 
+
 import rclpy
 from rclpy.node import Node
 from rclpy.executors import MultiThreadedExecutor
@@ -35,6 +36,8 @@ from sbsvf_api.object_pb2 import ObjectKinematic, ObjectState, RoadObjectType, S
 from sbsvf_api.scenario_pb2 import ScenarioPack
 
 from publish_manager import PublishManager, TopicPublisher, PublishMode
+from exception.av import RouteNotFoundError
+
 
 CLOCK_PUB_HZ = 100.0  # Hz
 
@@ -277,7 +280,7 @@ class AutowarePureAV:
         except RuntimeError as e:
             self._quit_flag = True
             self._last_error = str(e)
-            raise RuntimeError("Failed to set Autoware route points.") from e
+            raise RouteNotFoundError("Failed to set Autoware route points.") from e
 
         # When autoware reset (after second round), ego state may be still in WAITING_FOR_ENGAGE for a while, so wait here to ensure re-planning
         time.sleep(2.0)

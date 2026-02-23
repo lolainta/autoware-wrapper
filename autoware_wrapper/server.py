@@ -12,6 +12,8 @@ from autoware import AutowarePureAV
 
 import logging
 
+from exception.av import RouteNotFoundError
+
 logger = logging.getLogger(__name__)
 logging.basicConfig(
     level=logging.INFO,
@@ -46,9 +48,14 @@ class AVServer(av_server_pb2_grpc.AvServerServicer):
         output_dir = request.output_dir.path
         scenario_pack = request.scenario_pack
         initial_observation = request.initial_observation
-        return av_server_pb2.AvServerMessages.ResetResponse(
-            ctrl_cmd=self._av.reset(output_dir, scenario_pack, initial_observation)
-        )
+        try:
+            ret = self._av.reset(output_dir, scenario_pack, initial_observation)
+            return av_server_pb2.AvServerMessages.ResetResponse(ctrl_cmd=ret)
+        except RouteNotFoundError as e:
+            logger.error(f"RouteNotFoundError during Reset: {str(e)}")
+            context.set_code(grpc.StatusCode.NOT_FOUND)
+            context.set_details(str(e))
+            return av_server_pb2.AvServerMessages.ResetResponse(ctrl_cmd={})
 
     def Step(self, request, context):
         observation = request.observation
