@@ -25,6 +25,7 @@ import nav_msgs.msg as nav_msgs
 import geometry_msgs.msg as geometry_msgs
 import autoware_system_msgs.msg as autoware_system_msgs
 import autoware_control_msgs.msg as autoware_control_msgs
+import autoware_adapi_v1_msgs.msg as autoware_adapi_v1_msgs
 import autoware_adapi_v1_msgs.srv as autoware_adapi_v1_msgs_srv
 import autoware_vehicle_msgs.msg as autoware_vehicle_msgs
 import sensor_msgs.msg as sensor_msgs
@@ -154,12 +155,11 @@ class AutowarePureAV:
         self._control_mode: Optional[int] = (
             autoware_vehicle_msgs.ControlModeReport.NO_COMMAND
         )
+        self._autoware_motion_state = None
         self._current_gear: Optional[int] = autoware_vehicle_msgs.GearCommand.NONE
         self._latest_control: autoware_control_msgs.Control = None
         self._latest_control_stamp = 0
         self._kinematic: ObjectKinematic = ObjectKinematic()
-        self._prev_kinematic: ObjectKinematic = ObjectKinematic()
-        self._prev_prev_kinematic: ObjectKinematic = ObjectKinematic()
         self._quit_flag: bool = False
         self._last_error: Optional[str] = None
         self._agents: List[ObjectState] = []
@@ -238,16 +238,20 @@ class AutowarePureAV:
         self._current_gear = autoware_vehicle_msgs.GearCommand.NONE
         self._quit_flag = False
         self._last_error = None
+        self._kinematic = ObjectKinematic()
+        self._agents = []
+
+        try:
+            self._stop_autoware_vehicle()
+        except Exception as e:
+            self._last_error = str(e)
+            logger.warning(f"Error while stopping Autoware vehicle: {self._last_error}")
 
         self._kinematic = ObjectKinematic()
-        self._prev_kinematic = ObjectKinematic()
-        self._prev_prev_kinematic = ObjectKinematic()
-
         init_kinematic = init_obs[0].kinematic
         init_kinematic.time_ns = self._current_ros_time_ns
         self._agents = init_obs[1:] if init_obs and len(init_obs) > 1 else []
-
-        self._update_kinematic(init_kinematic)
+        self._kinematic = init_kinematic
 
         # 1) localization
         logger.info(f"Initializing Autoware... (Current state: {self._vehicle_state})")
@@ -295,18 +299,21 @@ class AutowarePureAV:
             self._last_error = str(e)
             raise RouteNotFoundError("Failed to set Autoware route points.") from e
 
-        # When autoware reset (after second round), ego state may be still in WAITING_FOR_ENGAGE for a while, so wait here to ensure re-planning
-        time.sleep(2.0)
-
         start = time.time()
         while (
-            self._vehicle_state
-            == autoware_system_msgs.AutowareState.WAITING_FOR_ROUTE
-            # or self._vehicle_state
-            # > autoware_system_msgs.AutowareState.PLANNING
+            self._vehicle_state == autoware_system_msgs.AutowareState.WAITING_FOR_ROUTE
         ) and time.time() - start < self._timeout_sec:
             logger.info(f"Waiting for autoware to set route... ")
+            if time.time() - start > self._timeout_sec:
+                self._last_error = "Autoware set route timed out."
+                logger.error(self._last_error)
+                self._quit_flag = True
+                raise RuntimeError(self._last_error)
+
             time.sleep(0.1)
+
+        # When autoware reset (after second round), ego state may be still in WAITING_FOR_ENGAGE for a while, so wait here to ensure re-planning
+        # time.sleep(2.0)
 
         start = time.time()
         while (
@@ -314,14 +321,12 @@ class AutowarePureAV:
             and time.time() - start < self._timeout_sec
         ):
             logger.info(f"Waiting for autoware planning... ")
+            if time.time() - start > self._timeout_sec:
+                self._last_error = "Autoware planning timed out."
+                logger.error(self._last_error)
+                self._quit_flag = True
+                raise RuntimeError(self._last_error)
             time.sleep(0.1)
-
-        # Check if route is set
-        if self._vehicle_state != autoware_system_msgs.AutowareState.WAITING_FOR_ENGAGE:
-            logger.error("Autoware planning timed out.")
-            self._quit_flag = True
-            self._last_error = "Autoware planning timed out."
-            raise RuntimeError("Autoware planning timed out.")
 
         logger.info("Autoware reset ready. Ready to engage.")
 
@@ -363,8 +368,9 @@ class AutowarePureAV:
         if self._vehicle_state == autoware_system_msgs.AutowareState.WAITING_FOR_ENGAGE:
             logger.info("Changing Autoware to autonomous mode...")
             try:
-                self._control_mode = autoware_vehicle_msgs.ControlModeReport.AUTONOMOUS
+                input("Press Enter to change Autoware to autonomous mode...")
                 self._call_change_to_autonomous()
+                self._control_mode = autoware_vehicle_msgs.ControlModeReport.AUTONOMOUS
             except RuntimeError as e:
                 self._quit_flag = True
                 self._last_error = str(e)
@@ -396,7 +402,7 @@ class AutowarePureAV:
         if ego is not None:
             cur_kinematic = ego.kinematic
             cur_kinematic.time_ns = self._current_ros_time_ns
-            self._update_kinematic(cur_kinematic)
+            self._kinematic = cur_kinematic
 
         self._agents = obs[1:] if len(obs) > 1 else []
 
@@ -674,6 +680,13 @@ class AutowarePureAV:
             qos_profile,
         )
 
+        self._autoware_motion_state_sub = self._node.create_subscription(
+            autoware_adapi_v1_msgs.MotionState,
+            "/api/motion/state",
+            self._on_autoware_motion_state,
+            qos_profile,
+        )
+
         # services
         self._client_initial_localization = self._node.create_client(
             autoware_adapi_v1_msgs_srv.InitializeLocalization,
@@ -686,6 +699,10 @@ class AutowarePureAV:
         self._client_set_route_points = self._node.create_client(
             autoware_adapi_v1_msgs_srv.SetRoutePoints,
             "/api/routing/set_route_points",
+        )
+        self._client_change_to_stop = self._node.create_client(
+            autoware_adapi_v1_msgs_srv.ChangeOperationMode,
+            "/api/operation_mode/change_to_stop",
         )
         self._client_change_to_auto = self._node.create_client(
             autoware_adapi_v1_msgs_srv.ChangeOperationMode,
@@ -784,7 +801,6 @@ class AutowarePureAV:
             self._current_ros_time_ns = self._base_time_ns
 
             self._kinematic.time_ns = self._current_ros_time_ns
-            self._update_kinematic(self._kinematic)
 
             now = Time(nanoseconds=self._current_ros_time_ns)
             self._publish_manager.publish_all(now)
@@ -797,6 +813,11 @@ class AutowarePureAV:
 
     def _on_gear_command(self, msg: autoware_vehicle_msgs.GearCommand) -> None:
         self._current_gear = msg.command
+
+    def _on_autoware_motion_state(
+        self, msg: autoware_adapi_v1_msgs.MotionState
+    ) -> None:
+        self._autoware_motion_state = msg.state
 
     # ------------------------------------------------------------------
     # AD API calls
@@ -881,7 +902,6 @@ class AutowarePureAV:
 
     def _call_set_route_points(self, sps: ScenarioPack) -> None:
         assert self._node is not None
-        self._call_clear_route()
         req = autoware_adapi_v1_msgs_srv.SetRoutePoints.Request()
         req.header.frame_id = "map"
         req.header.stamp = Time(nanoseconds=self._current_ros_time_ns).to_msg()
@@ -930,6 +950,20 @@ class AutowarePureAV:
             msg = (
                 f"ClearRoute failed: code={code}, success={succ}, message={status_msg}"
             )
+            raise RuntimeError(msg)
+
+    def _call_change_to_stop(self) -> None:
+        assert self._node is not None
+        req = autoware_adapi_v1_msgs_srv.ChangeOperationMode.Request()
+        fut = self._client_change_to_stop.call_async(req)
+        start = time.time()
+        while rclpy.ok() and not fut.done() and time.time() - start < self._timeout_sec:
+            time.sleep(0.01)
+        res = fut.result()
+        if res is None or not res.status.success:
+            msg = f"ChangeOperationMode(STOP) failed: {getattr(res.status, 'message', 'unknown') if res else 'no response'}"
+            self._last_error = msg
+            self._quit_flag = True
             raise RuntimeError(msg)
 
     def _call_change_to_autonomous(self) -> None:
@@ -1250,11 +1284,6 @@ class AutowarePureAV:
 
         return CtrlCmd(mode=CtrlMode.ACKERMANN, payload=payload)
 
-    def _update_kinematic(self, kinematic: ObjectKinematic) -> None:
-        self._prev_prev_kinematic = self._prev_kinematic
-        self._prev_kinematic = self._kinematic
-        self._kinematic = kinematic
-
     def _setup_sps(self, sps: ScenarioPack) -> bool:
         """
         Update map path from ScenarioPack.
@@ -1281,6 +1310,49 @@ class AutowarePureAV:
         self._map_path = map_full_path
 
         return is_changed
+
+    def _stop_autoware_vehicle(self) -> None:
+        try:
+            self._call_change_to_stop()
+        except Exception as e:
+            logger.warning(f"Failed to change Autoware to STOP mode: {e}")
+            # continue anyway
+
+        # wait until Autoware reports stopped state or timeout
+        start = time.time()
+        while rclpy.ok() and (
+            self._autoware_motion_state is None
+            or self._autoware_motion_state != autoware_adapi_v1_msgs.MotionState.STOPPED
+        ):
+            print(
+                f"Waiting for Autoware to stop... current state: {self._autoware_motion_state}"
+            )
+            print(f"Elapsed time: {time.time() - start:.2f}s")
+            if time.time() - start > self._timeout_sec:
+                logger.warning(
+                    f"Timeout while waiting for Autoware to stop after {self._timeout_sec}s"
+                )
+                break
+            time.sleep(0.1)
+
+        try:
+            self._call_clear_route()
+        except Exception as e:
+            logger.warning(f"Failed to clear Autoware route: {e}")
+            # continue anyway
+
+        # check if autoware's state is "waiting for route or wait for initial pose"
+        while self._vehicle_state >= autoware_system_msgs.AutowareState.PLANNING:
+            print(
+                f"Waiting for Autoware to clear route... current state: {self._vehicle_state}"
+            )
+            print(f"Elapsed time: {time.time() - start:.2f}s")
+            if time.time() - start > self._timeout_sec:
+                logger.warning(
+                    f"Timeout while waiting for Autoware to be ready for new route after {self._timeout_sec}s"
+                )
+                break
+            time.sleep(0.1)
 
     @staticmethod
     def _yaw_to_quat(yaw: float) -> tuple[float, float]:
