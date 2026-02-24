@@ -159,6 +159,7 @@ class AutowarePureAV:
         self._control_mode: Optional[int] = (
             autoware_vehicle_msgs.ControlModeReport.NO_COMMAND
         )
+        self._operation_mode_state = None
         self._autoware_motion_state = None
         self._current_gear: Optional[int] = autoware_vehicle_msgs.GearCommand.NONE
         self._latest_control: autoware_control_msgs.Control = None
@@ -299,6 +300,7 @@ class AutowarePureAV:
             f"Setting Autoware route points... (Current state: {self._vehicle_state})"
         )
         try:
+            time.sleep(1.0)  # wait a bit for autoware to be fully ready after localization before setting route
             self._call_set_route_points(sps)
         except RuntimeError as e:
             self._quit_flag = True
@@ -332,6 +334,21 @@ class AutowarePureAV:
                 logger.error(self._last_error)
                 self._quit_flag = True
                 raise PlanningTimeoutError(self._last_error)
+            time.sleep(0.1)
+
+        # check operation mode state is_autonomous_mode_available == true and is_in_transition == False to ensure autoware is ready to engage
+        start = time.time()
+        while (
+            self._operation_mode_state is None
+            or not self._operation_mode_state.is_autonomous_mode_available
+            or self._operation_mode_state.is_in_transition
+        ) and time.time() - start < self._timeout_sec:
+            logger.info(f"Waiting for autoware to be ready to engage... ")
+            if time.time() - start > self._timeout_sec:
+                self._last_error = "Autoware ready to engage timed out."
+                logger.error(self._last_error)
+                self._quit_flag = True
+                raise RuntimeError(self._last_error)
             time.sleep(0.1)
 
         logger.info("Autoware reset ready. Ready to engage.")
@@ -374,7 +391,6 @@ class AutowarePureAV:
         if self._vehicle_state == autoware_system_msgs.AutowareState.WAITING_FOR_ENGAGE:
             logger.info("Changing Autoware to autonomous mode...")
             try:
-                input("Press Enter to change Autoware to autonomous mode...")
                 self._call_change_to_autonomous()
                 self._control_mode = autoware_vehicle_msgs.ControlModeReport.AUTONOMOUS
             except RuntimeError as e:
@@ -693,6 +709,13 @@ class AutowarePureAV:
             qos_profile,
         )
 
+        self._operation_mode_state_sub = self._node.create_subscription(
+            autoware_adapi_v1_msgs.OperationModeState,
+            "/api/operation_mode/state",
+            self._on_operation_mode_state,
+            qos_profile,
+        )
+
         # services
         self._client_initial_localization = self._node.create_client(
             autoware_adapi_v1_msgs_srv.InitializeLocalization,
@@ -824,6 +847,11 @@ class AutowarePureAV:
         self, msg: autoware_adapi_v1_msgs.MotionState
     ) -> None:
         self._autoware_motion_state = msg.state
+
+    def _on_operation_mode_state(
+        self, msg: autoware_adapi_v1_msgs.OperationModeState
+    ) -> None:
+        self._operation_mode_state = msg
 
     # ------------------------------------------------------------------
     # AD API calls
