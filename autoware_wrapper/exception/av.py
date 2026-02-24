@@ -4,3 +4,15 @@ class AvError(Exception):
 
 class RouteNotFoundError(AvError):
     pass
+
+
+class ResetError(AvError):
+    pass
+
+
+class LocalizationTimeoutError(ResetError):
+    pass
+
+
+class PlanningTimeoutError(ResetError):
+    pass

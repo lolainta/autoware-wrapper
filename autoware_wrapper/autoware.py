@@ -36,7 +36,7 @@ from sbsvf_api.object_pb2 import ObjectKinematic, ObjectState, RoadObjectType, S
 from sbsvf_api.scenario_pb2 import ScenarioPack
 
 from publish_manager import PublishManager, TopicPublisher, PublishMode
-from exception.av import RouteNotFoundError
+from exception.av import RouteNotFoundError, LocalizationTimeoutError, PlanningTimeoutError
 
 
 CLOCK_PUB_HZ = 100.0  # Hz
@@ -267,7 +267,7 @@ class AutowarePureAV:
             logger.error("Autoware localization initialization timed out.")
             self._quit_flag = True
             self._last_error = "Autoware localization initialization timed out."
-            raise RuntimeError("Autoware localization initialization timed out.")
+            raise LocalizationTimeoutError("Autoware localization initialization timed out.")
 
         logger.info("Autoware localization initialized.")
 
@@ -308,7 +308,7 @@ class AutowarePureAV:
             logger.error("Autoware planning timed out.")
             self._quit_flag = True
             self._last_error = "Autoware planning timed out."
-            raise RuntimeError("Autoware planning timed out.")
+            raise PlanningTimeoutError("Autoware planning timed out.")
 
         logger.info("Autoware reset ready. Ready to engage.")
 
