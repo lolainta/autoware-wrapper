@@ -37,7 +37,11 @@ from sbsvf_api.object_pb2 import ObjectKinematic, ObjectState, RoadObjectType, S
 from sbsvf_api.scenario_pb2 import ScenarioPack
 
 from publish_manager import PublishManager, TopicPublisher, PublishMode
-from exception.av import RouteNotFoundError
+from exception.av import (
+    RouteError,
+    LocalizationTimeoutError,
+    PlanningTimeoutError,
+)
 
 
 CLOCK_PUB_HZ = 100.0  # Hz
@@ -260,7 +264,7 @@ class AutowarePureAV:
         except RuntimeError as e:
             self._quit_flag = True
             self._last_error = str(e)
-            raise RuntimeError("Failed to initialize Autoware localization.") from e
+            raise RuntimeError("Failed to call InitializeLocalization service.") from e
 
         # Wait for localization to be ready
         start = time.time()
@@ -284,7 +288,9 @@ class AutowarePureAV:
             logger.error("Autoware localization initialization timed out.")
             self._quit_flag = True
             self._last_error = "Autoware localization initialization timed out."
-            raise RuntimeError("Autoware localization initialization timed out.")
+            raise LocalizationTimeoutError(
+                "Autoware localization initialization timed out."
+            )
 
         logger.info("Autoware localization initialized.")
 
@@ -297,7 +303,7 @@ class AutowarePureAV:
         except RuntimeError as e:
             self._quit_flag = True
             self._last_error = str(e)
-            raise RouteNotFoundError("Failed to set Autoware route points.") from e
+            raise RouteError("Failed to set Autoware route points.") from e
 
         start = time.time()
         while (
@@ -308,7 +314,7 @@ class AutowarePureAV:
                 self._last_error = "Autoware set route timed out."
                 logger.error(self._last_error)
                 self._quit_flag = True
-                raise RuntimeError(self._last_error)
+                raise RouteError(self._last_error)
 
             time.sleep(0.1)
 
@@ -325,7 +331,7 @@ class AutowarePureAV:
                 self._last_error = "Autoware planning timed out."
                 logger.error(self._last_error)
                 self._quit_flag = True
-                raise RuntimeError(self._last_error)
+                raise PlanningTimeoutError(self._last_error)
             time.sleep(0.1)
 
         logger.info("Autoware reset ready. Ready to engage.")

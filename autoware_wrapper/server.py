@@ -12,7 +12,11 @@ from autoware import AutowarePureAV
 
 import logging
 
-from exception.av import RouteNotFoundError
+from exception.av import (
+    RouteError,
+    LocalizationTimeoutError,
+    PlanningTimeoutError,
+)
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(
@@ -50,12 +54,23 @@ class AVServer(av_server_pb2_grpc.AvServerServicer):
         initial_observation = request.initial_observation
         try:
             ret = self._av.reset(output_dir, scenario_pack, initial_observation)
-            return av_server_pb2.AvServerMessages.ResetResponse(ctrl_cmd=ret)
-        except RouteNotFoundError as e:
-            logger.error(f"RouteNotFoundError during Reset: {str(e)}")
-            context.set_code(grpc.StatusCode.NOT_FOUND)
+        except LocalizationTimeoutError as e:
+            logger.error(f"LocalizationTimeoutError during Reset: {str(e)}")
+            context.set_code(grpc.StatusCode.UNAVAILABLE)
             context.set_details(str(e))
             return av_server_pb2.AvServerMessages.ResetResponse(ctrl_cmd={})
+        except PlanningTimeoutError as e:
+            logger.error(f"PlanningTimeoutError during Reset: {str(e)}")
+            context.set_code(grpc.StatusCode.UNAVAILABLE)
+            context.set_details(str(e))
+            return av_server_pb2.AvServerMessages.ResetResponse(ctrl_cmd={})
+        except RouteError as e:
+            logger.error(f"RouteError during Reset: {str(e)}")
+            context.set_code(grpc.StatusCode.INTERNAL)
+            context.set_details(str(e))
+            return av_server_pb2.AvServerMessages.ResetResponse(ctrl_cmd={})
+        else:
+            return av_server_pb2.AvServerMessages.ResetResponse(ctrl_cmd=ret)
 
     def Step(self, request, context):
         observation = request.observation
