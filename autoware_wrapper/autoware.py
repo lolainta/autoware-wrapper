@@ -99,6 +99,19 @@ class AutowarePureAV:
         self._rt_cfg = self._autoware_cfg.get("runtime", {})
         self._timeout_sec = float(self._rt_cfg.get("timeout_sec", 30.0))
         self._control_timeout_sec = float(self._rt_cfg.get("control_timeout_sec", 0.01))
+        coord_cfg = self._autoware_cfg.get("coordinate_transform", {})
+        self._yaw_sign = float(coord_cfg.get("yaw_sign", 1.0))
+        yaw_offset_rad = coord_cfg.get("yaw_offset_rad", None)
+        yaw_offset_deg = coord_cfg.get("yaw_offset_deg", 0.0)
+        if yaw_offset_rad is None:
+            self._yaw_offset_rad = math.radians(float(yaw_offset_deg))
+        else:
+            self._yaw_offset_rad = float(yaw_offset_rad)
+        if not math.isclose(abs(self._yaw_sign), 1.0):
+            logger.warning(
+                "coordinate_transform.yaw_sign=%s is unusual, expected ±1.0",
+                self._yaw_sign,
+            )
 
         # ScenarioPack
         self._sps: Optional[ScenarioPack] = None
@@ -191,11 +204,11 @@ class AutowarePureAV:
         """
         Reset AV internal state when simulator resets.
 
-        做兩件事：
-        1. 如有換 map，就重啟 Autoware
-        2. 用 AD API 設 initial pose / route
+        1. If the map has changed, restart Autoware process
+        2. Call InitializeLocalization service to set initial pose
+        3. Call SetRoutePoints service to set route
         """
-
+        logger.info("Setting timeout sec = %.2f", self._timeout_sec)
         self._output_dir = self._output_base / output_related
 
         self._ensure_ros_node()
@@ -329,6 +342,12 @@ class AutowarePureAV:
         self._ensure_ros_node()
         self._sim_time_ns = time_stamp_ns
         self._current_ros_time_ns = self._base_time_ns + self._sim_time_ns
+
+        # Check if autoware is completed
+        if self._vehicle_state == autoware_system_msgs.AutowareState.ARRIVED_GOAL:
+            logger.info("Autoware has completed the route.")
+            self._quit_flag = True
+            return CtrlCmd(mode=CtrlMode.NONE)
 
         # Check Autoware vehicle state
         if (
@@ -810,7 +829,8 @@ class AutowarePureAV:
         t.transform.translation.z = float(self._kinematic.z)
 
         # Euler angle to quaternion
-        qz, qw = self._yaw_to_quat(self._kinematic.yaw)
+        ego_yaw = self._sim_yaw_to_ros(self._kinematic.yaw)
+        qz, qw = self._yaw_to_quat(ego_yaw)
         t.transform.rotation.z = qz
         t.transform.rotation.w = qw
 
@@ -823,9 +843,9 @@ class AutowarePureAV:
         pose_msg.pose.pose.position.y = float(self._kinematic.y)
         pose_msg.pose.pose.position.z = float(self._kinematic.z)
         logger.info(
-            f"Setting initial position: x={self._kinematic.x}, y={self._kinematic.y}, z={self._kinematic.z}, h={self._kinematic.yaw}, speed={self._kinematic.speed}"
+            f"Setting initial position: x={self._kinematic.x}, y={self._kinematic.y}, z={self._kinematic.z}, h_raw={self._kinematic.yaw}, h_ros={ego_yaw}, speed={self._kinematic.speed}"
         )
-        qz, qw = self._yaw_to_quat(self._kinematic.yaw)
+        qz, qw = self._yaw_to_quat(ego_yaw)
         pose_msg.pose.pose.orientation.z = qz
         pose_msg.pose.pose.orientation.w = qw
 
@@ -872,7 +892,7 @@ class AutowarePureAV:
         goal.position.y = float(gp.world.y)
         goal.position.z = float(gp.world.z)
 
-        qz, qw = self._yaw_to_quat(gp.world.h)
+        qz, qw = self._yaw_to_quat(self._sim_yaw_to_ros(gp.world.h))
         goal.orientation.z = qz
         goal.orientation.w = qw
 
@@ -946,13 +966,13 @@ class AutowarePureAV:
         msg.pose.pose.position.y = self._kinematic.y
         msg.pose.pose.position.z = self._kinematic.z
 
-        yaw = self._kinematic.yaw
+        yaw = self._sim_yaw_to_ros(self._kinematic.yaw)
         qz, qw = self._yaw_to_quat(yaw)
         msg.pose.pose.orientation.z = qz
         msg.pose.pose.orientation.w = qw
 
         msg.twist.twist.linear.x = self._kinematic.speed
-        msg.twist.twist.angular.z = self._kinematic.yaw_rate
+        msg.twist.twist.angular.z = self._sim_yaw_rate_to_ros(self._kinematic.yaw_rate)
 
         self._kinematic_state_pub.publish(msg)
 
@@ -962,7 +982,9 @@ class AutowarePureAV:
         accel.header.stamp = now
         accel.header.frame_id = "base_link"
         accel.accel.accel.linear.x = self._kinematic.acceleration
-        accel.accel.accel.angular.z = self._kinematic.yaw_acceleration
+        accel.accel.accel.angular.z = self._sim_yaw_rate_to_ros(
+            self._kinematic.yaw_acceleration
+        )
         self._accel_pub.publish(accel)
 
     def _publish_dynamic_objects(self, t: rclpy.time.Time) -> None:
@@ -1025,7 +1047,8 @@ class AutowarePureAV:
             kin.pose_with_covariance.pose.position.y = ag.kinematic.y
             kin.pose_with_covariance.pose.position.z = ag.kinematic.z
 
-            qz, qw = self._yaw_to_quat(ag.kinematic.yaw)
+            yaw = self._sim_yaw_to_ros(ag.kinematic.yaw)
+            qz, qw = self._yaw_to_quat(yaw)
             kin.pose_with_covariance.pose.orientation.z = qz
             kin.pose_with_covariance.pose.orientation.w = qw
 
@@ -1042,13 +1065,14 @@ class AutowarePureAV:
             # Twist
             kin.has_twist = True
             kin.twist_with_covariance.twist.linear.x = ag.kinematic.speed
-            kin.twist_with_covariance.twist.angular.z = ag.kinematic.yaw_rate
+            kin.twist_with_covariance.twist.angular.z = self._sim_yaw_rate_to_ros(
+                ag.kinematic.yaw_rate
+            )
 
             sigma_v = 0.02  # m/s
             sigma_w = 0.01  # rad/s
 
             kin.has_twist_covariance = True
-            kin.has_twist_covariance = False
             kin.twist_with_covariance.covariance[0] = sigma_v**2
             kin.twist_with_covariance.covariance[7] = sigma_v**2
             kin.twist_with_covariance.covariance[14] = sigma_v**2
@@ -1121,7 +1145,7 @@ class AutowarePureAV:
         t.transform.translation.z = self._kinematic.z
 
         t.transform.rotation.z, t.transform.rotation.w = self._yaw_to_quat(
-            self._kinematic.yaw
+            self._sim_yaw_to_ros(self._kinematic.yaw)
         )
 
         # publish
@@ -1157,7 +1181,7 @@ class AutowarePureAV:
         msg.header.frame_id = "base_link"
         msg.longitudinal_velocity = self._kinematic.speed
         msg.lateral_velocity = 0.0
-        msg.heading_rate = self._kinematic.yaw_rate
+        msg.heading_rate = self._sim_yaw_rate_to_ros(self._kinematic.yaw_rate)
 
         self._velocity_report_pub.publish(msg)
 
@@ -1264,6 +1288,18 @@ class AutowarePureAV:
         cy = math.cos(yaw * 0.5)
         sy = math.sin(yaw * 0.5)
         return sy, cy
+
+    @staticmethod
+    def _normalize_yaw(yaw: float) -> float:
+        return math.atan2(math.sin(yaw), math.cos(yaw))
+
+    def _sim_yaw_to_ros(self, yaw: float) -> float:
+        yaw = self._normalize_yaw(yaw)
+        yaw = self._yaw_sign * yaw + self._yaw_offset_rad
+        return self._normalize_yaw(yaw)
+
+    def _sim_yaw_rate_to_ros(self, yaw_rate: float) -> float:
+        return self._yaw_sign * yaw_rate
 
     @staticmethod
     def _quat_to_yaw(q) -> float:
