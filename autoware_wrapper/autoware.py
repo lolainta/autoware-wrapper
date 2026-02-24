@@ -253,6 +253,13 @@ class AutowarePureAV:
             self._last_error = str(e)
             logger.warning(f"Error while stopping Autoware vehicle: {self._last_error}")
 
+        self._kinematic = ObjectKinematic()
+        init_kinematic = init_obs[0].kinematic
+        init_kinematic.time_ns = self._current_ros_time_ns
+        self._agents = init_obs[1:] if init_obs and len(init_obs) > 1 else []
+        self._kinematic = init_kinematic
+
+
         # 1) localization
         logger.info(f"Initializing Autoware... (Current state: {self._vehicle_state})")
         try:
@@ -295,9 +302,8 @@ class AutowarePureAV:
             f"Setting Autoware route points... (Current state: {self._vehicle_state})"
         )
         try:
-            time.sleep(
-                1.0
-            )  # wait a bit for autoware to be fully ready after localization before setting route
+            # wait a bit for autoware to be fully ready after localization before setting route
+            time.sleep(1.0)
             self._call_set_route_points(sps)
         except RuntimeError as e:
             self._quit_flag = True
