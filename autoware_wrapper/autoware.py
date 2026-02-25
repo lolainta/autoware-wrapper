@@ -154,7 +154,6 @@ class AutowarePureAV:
         self._sim_time_ns: int = 0  # time at current sim step (nanoseconds)
         self._current_ros_time_ns: int = 0  # current ROS time (nanoseconds)
 
-        self._last_heavy_data_time: float = 0.0
         self._vehicle_state: Optional[int] = None
         self._control_mode: Optional[int] = (
             autoware_vehicle_msgs.ControlModeReport.NO_COMMAND
@@ -185,7 +184,7 @@ class AutowarePureAV:
 
         self._launch_autoware()
 
-        # 等待 AD API services ready
+        # Wait AD API services ready
         self._wait_for_service(
             self._client_initial_localization, "InitializeLocalization"
         )
@@ -259,7 +258,6 @@ class AutowarePureAV:
         self._agents = init_obs[1:] if init_obs and len(init_obs) > 1 else []
         self._kinematic = init_kinematic
 
-
         # 1) localization
         logger.info(f"Initializing Autoware... (Current state: {self._vehicle_state})")
         try:
@@ -295,8 +293,6 @@ class AutowarePureAV:
                 "Autoware localization initialization timed out."
             )
 
-        logger.info("Autoware localization initialized.")
-
         # 2) routing
         logger.info(
             f"Setting Autoware route points... (Current state: {self._vehicle_state})"
@@ -313,24 +309,17 @@ class AutowarePureAV:
         start = time.time()
         while (
             self._vehicle_state == autoware_system_msgs.AutowareState.WAITING_FOR_ROUTE
-        ) and time.time() - start < self._timeout_sec:
+        ):
             logger.info(f"Waiting for autoware to set route... ")
             if time.time() - start > self._timeout_sec:
                 self._last_error = "Autoware set route timed out."
                 logger.error(self._last_error)
                 self._quit_flag = True
                 raise RouteError(self._last_error)
-
             time.sleep(0.1)
 
-        # When autoware reset (after second round), ego state may be still in WAITING_FOR_ENGAGE for a while, so wait here to ensure re-planning
-        # time.sleep(2.0)
-
         start = time.time()
-        while (
-            self._vehicle_state == autoware_system_msgs.AutowareState.PLANNING
-            and time.time() - start < self._timeout_sec
-        ):
+        while self._vehicle_state == autoware_system_msgs.AutowareState.PLANNING:
             logger.info(f"Waiting for autoware planning... ")
             if time.time() - start > self._timeout_sec:
                 self._last_error = "Autoware planning timed out."
@@ -345,7 +334,7 @@ class AutowarePureAV:
             self._operation_mode_state is None
             or not self._operation_mode_state.is_autonomous_mode_available
             or self._operation_mode_state.is_in_transition
-        ) and time.time() - start < self._timeout_sec:
+        ):
             logger.info(f"Waiting for autoware to be ready to engage... ")
             if time.time() - start > self._timeout_sec:
                 self._last_error = "Autoware ready to engage timed out."
@@ -360,15 +349,7 @@ class AutowarePureAV:
 
     def step(self, obs: list[ObjectState], time_stamp_ns: int) -> CtrlCmd:
         """
-        - 發 ego state + optional agents 給 Autoware
-        - 等待一筆「新的」 control_cmd（最多 control_timeout_sec）
-        - 轉成 Ctrl 回傳
-
-        obs 假設格式：
-        {
-          "ego": {...},      # 必要
-          "agents": [...],   # 可選
-        }
+        Step function called at every sim step.
         """
         self._ensure_ros_node()
         self._sim_time_ns = time_stamp_ns
@@ -405,19 +386,15 @@ class AutowarePureAV:
 
             # Wait for change to autonomous
             start = time.time()
-            while (
-                self._vehicle_state != autoware_system_msgs.AutowareState.DRIVING
-                and time.time() - start < self._timeout_sec
-            ):
+            while self._vehicle_state != autoware_system_msgs.AutowareState.DRIVING:
                 logger.info(f"Waiting for autoware to enter autonomous mode... ")
-                time.sleep(0.1)
+                if time.time() - start > self._timeout_sec:
+                    self._last_error = "Autoware change to autonomous mode timed out."
+                    logger.error(self._last_error)
+                    self._quit_flag = True
+                    raise RuntimeError(self._last_error)
 
-            # Check if changed to autonomous
-            if self._vehicle_state != autoware_system_msgs.AutowareState.DRIVING:
-                logger.error("Autoware change to autonomous mode timed out.")
-                self._quit_flag = True
-                self._last_error = "Autoware change to autonomous mode timed out."
-                raise RuntimeError("Autoware change to autonomous mode timed out.")
+                time.sleep(0.1)
 
             self._initialized = True
             logger.info("Autoware is running...")
@@ -461,7 +438,7 @@ class AutowarePureAV:
         return self._prepare_control_payload()
 
     def stop(self) -> None:
-        """關閉 Autoware process + ROS node / executor"""
+        """Stop Autoware process + ROS node / executor"""
         self._stop_autoware_process()
 
         if self._executor and self._node:
@@ -478,9 +455,8 @@ class AutowarePureAV:
     def should_quit(self) -> bool:
         """
         True if:
-        - internal error / service 失敗
-        - Autoware process 掛掉
-        - MotionState: 曾 MOVING，現在 STOPPED
+        - internal error / service failure happened (quit_flag set)
+        - Autoware process exited unexpectedly
         """
         if self._quit_flag:
             logger.info("AutowareAV.should_quit: quit_flag set")
@@ -687,35 +663,36 @@ class AutowarePureAV:
         self._control_sub = self._node.create_subscription(
             autoware_control_msgs.Control,
             "/control/command/control_cmd",
-            self._on_control,
+            # self._on_control,
+            lambda msg: setattr(self, "_latest_control", msg),
             qos_profile,
         )
 
         self._autoware_state_sub = self._node.create_subscription(
             autoware_system_msgs.AutowareState,
             "/autoware/state",
-            self._on_autoware_state,
+            lambda msg: setattr(self, "_vehicle_state", msg.state),
             qos_profile,
         )
 
         self._gear_cmd_sub = self._node.create_subscription(
             autoware_vehicle_msgs.GearCommand,
             "/control/command/gear_cmd",
-            self._on_gear_command,
+            lambda msg: setattr(self, "_current_gear", msg.command),
             qos_profile,
         )
 
         self._autoware_motion_state_sub = self._node.create_subscription(
             autoware_adapi_v1_msgs.MotionState,
             "/api/motion/state",
-            self._on_autoware_motion_state,
+            lambda msg: setattr(self, "_autoware_motion_state", msg.state),
             qos_profile,
         )
 
         self._operation_mode_state_sub = self._node.create_subscription(
             autoware_adapi_v1_msgs.OperationModeState,
             "/api/operation_mode/state",
-            self._on_operation_mode_state,
+            lambda msg: setattr(self, "_operation_mode_state", msg),
             qos_profile,
         )
 
@@ -798,7 +775,7 @@ class AutowarePureAV:
 
     def _stop_autoware_process(self) -> None:
         """
-        安全地關掉整個 Autoware process group
+        Gracefully stop Autoware process group, with timeout and fallback to kill if needed.
         """
         if self._autoware_proc is None:
             return
@@ -811,11 +788,8 @@ class AutowarePureAV:
 
         try:
             pgid = os.getpgid(self._autoware_proc.pid)
-
-            # 先優雅關閉
             os.killpg(pgid, signal.SIGTERM)
 
-            # 等待 bash（group leader）結束
             self._autoware_proc.wait(timeout=5.0)
 
         except subprocess.TimeoutExpired:
@@ -825,7 +799,6 @@ class AutowarePureAV:
             os.killpg(pgid, signal.SIGKILL)
 
         except ProcessLookupError:
-            # process 已經不存在
             pass
 
         finally:
@@ -843,25 +816,6 @@ class AutowarePureAV:
 
             now = Time(nanoseconds=self._current_ros_time_ns)
             self._publish_manager.publish_all(now)
-
-    def _on_control(self, msg: autoware_control_msgs.Control) -> None:
-        self._latest_control = msg
-
-    def _on_autoware_state(self, msg: autoware_system_msgs.AutowareState) -> None:
-        self._vehicle_state = msg.state
-
-    def _on_gear_command(self, msg: autoware_vehicle_msgs.GearCommand) -> None:
-        self._current_gear = msg.command
-
-    def _on_autoware_motion_state(
-        self, msg: autoware_adapi_v1_msgs.MotionState
-    ) -> None:
-        self._autoware_motion_state = msg.state
-
-    def _on_operation_mode_state(
-        self, msg: autoware_adapi_v1_msgs.OperationModeState
-    ) -> None:
-        self._operation_mode_state = msg
 
     # ------------------------------------------------------------------
     # AD API calls
@@ -1015,7 +969,6 @@ class AutowarePureAV:
 
         req = autoware_adapi_v1_msgs_srv.ChangeOperationMode.Request()
         fut = self._client_change_to_auto.call_async(req)
-        # rclpy.spin_until_future_complete(self._node, fut)
         start = time.time()
         while rclpy.ok() and not fut.done() and time.time() - start < self._timeout_sec:
             time.sleep(0.01)
@@ -1368,10 +1321,9 @@ class AutowarePureAV:
             self._autoware_motion_state is None
             or self._autoware_motion_state != autoware_adapi_v1_msgs.MotionState.STOPPED
         ):
-            print(
-                f"Waiting for Autoware to stop... current state: {self._autoware_motion_state}"
+            logger.debug(
+                f"Waiting for Autoware to stop... current state: {self._autoware_motion_state}, Elapsed time: {time.time() - start:.2f}s"
             )
-            print(f"Elapsed time: {time.time() - start:.2f}s")
             if time.time() - start > self._timeout_sec:
                 logger.warning(
                     f"Timeout while waiting for Autoware to stop after {self._timeout_sec}s"
@@ -1391,8 +1343,8 @@ class AutowarePureAV:
             self._route_state != autoware_adapi_v1_msgs.RouteState.UNSET
             or self._vehicle_state is None
             or self._vehicle_state >= autoware_system_msgs.AutowareState.PLANNING
-        ) and time.time() - start < self._timeout_sec:
-            print(
+        ):
+            logger.debug(
                 f"Waiting for Autoware to clear route... current route state: {self._route_state}, elapsed time: {time.time() - start:.2f}s"
             )
             if time.time() - start > self._timeout_sec:
