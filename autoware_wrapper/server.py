@@ -66,8 +66,13 @@ class AVServer(av_server_pb2_grpc.AvServerServicer):
             return av_server_pb2.AvServerMessages.ResetResponse(ctrl_cmd={})
         except RouteError as e:
             logger.error(f"RouteError during Reset: {str(e)}")
-            context.set_code(grpc.StatusCode.INTERNAL)
+            context.set_code(grpc.StatusCode.UNAVAILABLE)
             context.set_details(str(e))
+            return av_server_pb2.AvServerMessages.ResetResponse(ctrl_cmd={})
+        except Exception as e:
+            logger.error(f"Unexpected error during Reset: {str(e)}")
+            context.set_code(grpc.StatusCode.INTERNAL)
+            context.set_details(f"Unexpected error: {str(e)}")
             return av_server_pb2.AvServerMessages.ResetResponse(ctrl_cmd={})
         else:
             return av_server_pb2.AvServerMessages.ResetResponse(ctrl_cmd=ret)

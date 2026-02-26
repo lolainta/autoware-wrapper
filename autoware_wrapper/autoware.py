@@ -304,7 +304,7 @@ class AutowarePureAV:
         except RuntimeError as e:
             self._quit_flag = True
             self._last_error = str(e)
-            raise RouteError("Failed to set Autoware route points.") from e
+            raise RuntimeError("Failed to set Autoware route points.") from e
 
         start = time.time()
         while (
@@ -340,7 +340,7 @@ class AutowarePureAV:
                 self._last_error = "Autoware ready to engage timed out."
                 logger.error(self._last_error)
                 self._quit_flag = True
-                raise RuntimeError(self._last_error)
+                raise PlanningTimeoutError(self._last_error)
             time.sleep(0.1)
 
         logger.info("Autoware reset ready. Ready to engage.")
