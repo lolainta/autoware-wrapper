@@ -830,7 +830,7 @@ class AutowarePureAV:
                 msg = f"Service {name} not available after {timeout}s"
                 self._last_error = msg
                 self._quit_flag = True
-                return
+                raise RuntimeError(msg)
             logger.info(f"Waiting for Autoware service {name}...")
         logger.info(f"Service {name} is available.")
 
@@ -961,7 +961,7 @@ class AutowarePureAV:
         if res is None or not res.status.success:
             msg = f"ChangeOperationMode(STOP) failed: {getattr(res.status, 'message', 'unknown') if res else 'no response'}"
             self._last_error = msg
-            self._quit_flag = True
+            logger.error(msg)
             raise RuntimeError(msg)
 
     def _call_change_to_autonomous(self) -> None:
@@ -977,6 +977,7 @@ class AutowarePureAV:
             msg = f"ChangeOperationMode(AUTONOMOUS) failed: {getattr(res.status, 'message', 'unknown') if res else 'no response'}"
             self._last_error = msg
             self._quit_flag = True
+            logger.error(msg)
             raise RuntimeError(msg)
 
     # ------------------------------------------------------------------
